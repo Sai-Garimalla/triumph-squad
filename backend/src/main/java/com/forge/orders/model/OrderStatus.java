@@ -1,0 +1,19 @@
+package com.forge.orders.model;
+
+public enum OrderStatus {
+    CREATED,
+    INVENTORY_RESERVED,
+    PAYMENT_PROCESSING,
+    PAYMENT_CONFIRMED,
+    ORDER_CONFIRMED,
+    PICKING,
+    PACKED,
+    SHIPPED,
+    OUT_FOR_DELIVERY,
+    DELIVERED,
+    OUT_OF_STOCK,
+    PAYMENT_FAILED,
+    CANCELLED,
+    PROCESSING_FAILED,
+    DLQ
+}

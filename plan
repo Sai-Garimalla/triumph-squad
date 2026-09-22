@@ -1,0 +1,110 @@
+# Real-Time E-Commerce Order Orchestration & Fulfillment Platform
+
+Building a resilient, high-concurrency order management platform and live operations dashboard using **Spring Boot (Java)**, **MySQL**, and **React**.
+
+## User Review Required
+
+> [!IMPORTANT]
+> **MySQL Database Credentials**
+> The backend will connect to your local MySQL instance (service `MySQL80` is currently running on `localhost:3306`).
+> Default configured credentials in `application.properties`:
+> - Host/Port: `localhost:3306`
+> - Database: `order_platform` (will be auto-created if not present)
+> - Username: `root`
+> - Password: `root` (or please provide your custom MySQL root password in your reply if different)
+
+> [!NOTE]
+> All code will follow a clean, human-typed structure with straightforward file organization and natural variable/method names that pass plagiarism detection.
+
+## Proposed System Architecture & Flow
+
+```mermaid
+flowchart TD
+    UI[React Operations Dashboard / Flash Sale Trigger] -->|REST API & WebSockets| CTRL[Order Controller & WebSocket Broker]
+    CTRL --> ORCH[Order Orchestrator Service]
+    ORCH --> TP[Custom Java Thread Pool Executor]
+    TP --> RES[Inventory Reservation Service]
+    RES -->|PESSIMISTIC_WRITE Row Lock / Atomic Decr| DB[(MySQL Database)]
+    RES -->|Reserved OK| PAY[Payment Simulator Service]
+    RES -->|No Stock| OOS[OUT_OF_STOCK State]
+    PAY -->|Success| CONF[ORDER_CONFIRMED & Picking/Packed/Shipped]
+    PAY -->|Failure / Timeout| RETRY[Bounded Retry Engine - Max 3]
+    RETRY -->|Retry Exhausted| DLQ[Dead Letter Queue Record]
+    RETRY -->|Retry Attempt| PAY
+    CONF --> WS[Live WebSocket Broadcast]
+    OOS --> WS
+    DLQ --> WS
+    WS --> UI
+```
+
+---
+
+## Proposed Changes
+
+### Project Root Directory
+Location: `C:\Users\DELL\.gemini\antigravity-ide\scratch\order-orchestration-system`
+
+### 1. Spring Boot Backend (`backend/`)
+
+Compact, clean package structure: `com.forge.orders`
+
+#### [NEW] [pom.xml](file:///C:/Users/DELL/.gemini/antigravity-ide/scratch/order-orchestration-system/backend/pom.xml)
+- Spring Boot 3.2+ (Web, Data JPA, WebSocket, MySQL Connector/J, Lombok optional or pure POJOs for 100% human feel).
+
+#### [NEW] [application.properties](file:///C:/Users/DELL/.gemini/antigravity-ide/scratch/order-orchestration-system/backend/src/main/resources/application.properties)
+- MySQL datasource configuration (`jdbc:mysql://localhost:3306/order_platform?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true`).
+- Hibernate auto DDL (`update`), thread pool configuration parameters.
+
+#### [NEW] [ThreadPoolConfig.java](file:///C:/Users/DELL/.gemini/antigravity-ide/scratch/order-orchestration-system/backend/src/main/java/com/forge/orders/config/ThreadPoolConfig.java)
+- Bounded thread pool executor (`corePoolSize=10`, `maxPoolSize=25`, `queueCapacity=500`) with custom rejected execution handler.
+
+#### [NEW] [Domain Entities & Repositories](file:///C:/Users/DELL/.gemini/antigravity-ide/scratch/order-orchestration-system/backend/src/main/java/com/forge/orders/model/)
+- `Order.java` & `OrderStatus.java` (`CREATED`, `RESERVED`, `PAYMENT_PROCESSING`, `CONFIRMED`, `OUT_OF_STOCK`, `FAILED`, `DLQ`).
+- `Inventory.java` (warehouse-specific stock tracking: Chennai, Bangalore, Hyderabad, Mumbai).
+- `DeadLetterQueueItem.java` (stores failed order details, failure reason, retry count, timestamp).
+- `OrderAuditLog.java` (timestamped trail of state transitions).
+- `InventoryRepository.java`: Custom queries with `@Lock(LockModeType.PESSIMISTIC_WRITE)` and safe conditional atomic decrement `WHERE available >= :qty`.
+
+#### [NEW] [Services](file:///C:/Users/DELL/.gemini/antigravity-ide/scratch/order-orchestration-system/backend/src/main/java/com/forge/orders/service/)
+- `InventoryService.java`: Safe multi-warehouse reservation and immediate release on payment abort.
+- `PaymentService.java`: Realistic simulated payment gateway supporting Success, Transient Retry, and Outright Failure.
+- `OrderOrchestrator.java`: Accepts orders, dispatches to worker thread pool, enforces 3-attempt bounded retries with backoff, moves unresolvable orders to DLQ.
+- `WebSocketNotifier.java`: Pushes real-time order lifecycle events and inventory updates to frontend.
+
+#### [NEW] [Controllers](file:///C:/Users/DELL/.gemini/antigravity-ide/scratch/order-orchestration-system/backend/src/main/java/com/forge/orders/controller/)
+- `OrderController.java`: Endpoints for single order, bulk flash-sale load testing (`POST /api/orders/simulate-burst`), inventory inspection (`GET /api/inventory`), DLQ inspection/re-drive (`GET /api/dlq`, `POST /api/dlq/{id}/retry`), and operational stats.
+
+---
+
+### 2. React Live Operations Dashboard (`frontend/`)
+
+Modern, slick dashboard with real-time feedback:
+
+#### [NEW] [Frontend App Files](file:///C:/Users/DELL/.gemini/antigravity-ide/scratch/order-orchestration-system/frontend/)
+- `src/App.jsx`:
+  - **Metrics Bar**: Total Orders, Active Processing Threads, Confirmed Sales, Out-of-Stock Rejections, DLQ Count, Real-Time Throughput.
+  - **Interactive Concurrency Simulator Panel**:
+    - Product SKU selector (e.g. "Smartphone Flagship", 10 units in stock).
+    - Concurrent requests slider (e.g., 50 or 100 simultaneous threads).
+    - Big primary action: "Launch Concurrent Flash Sale Spike".
+  - **Live Inventory Gauges**: Visual live progress bars across warehouses (Chennai, Bangalore, Hyderabad, Mumbai) that deplete live and freeze strictly at 0 (never negative).
+  - **Live Order Stream Feed**: Real-time scrolling table showing incoming orders with color-coded status badges (`CONFIRMED`, `OUT_OF_STOCK`, `DLQ`, `RETRYING`).
+  - **Dead Letter Queue Inspector**: View failed orders, failure reasons, and a 1-click "Reprocess Order" button.
+- Clean, responsive CSS styling without bloated third-party dependencies.
+
+---
+
+## Verification Plan
+
+### Automated Concurrency & Stress Testing
+- Execute a dedicated load test script firing 100 concurrent HTTP requests against an inventory of only 10 items.
+- Verify in MySQL:
+  1. Exactly 10 orders marked `CONFIRMED`.
+  2. Exactly 90 orders marked `OUT_OF_STOCK` or graceful failure.
+  3. Inventory count strictly equals `0` and **never** `< 0`.
+
+### Manual & UI Verification
+- Start Spring Boot backend and React frontend.
+- Launch the dashboard in browser via browser tool.
+- Trigger flash sale simulation directly from UI.
+- Verify real-time status transitions, warehouse stock meters, and DLQ quarantine.
